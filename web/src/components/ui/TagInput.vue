@@ -61,7 +61,7 @@ function onKeydown(event: KeyboardEvent) {
       v-model="draft"
       type="text"
       class="h-7 min-w-[8rem] flex-1 bg-transparent px-1 text-sm text-steam placeholder:text-steam-dim/60 focus:outline-none"
-      :placeholder="model.length ? '添加…' : '输入后按回车或逗号添加，可粘贴多个'"
+      :placeholder="model.length ? '添加…' : '回车或逗号添加；用 / 建文件夹，如 动漫/海贼王'"
       @keydown="onKeydown"
       @blur="commit"
     />

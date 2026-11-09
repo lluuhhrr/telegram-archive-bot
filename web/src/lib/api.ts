@@ -137,6 +137,8 @@ export interface MessageQuery {
   q?: string
   /** 多标签交集：每个值单独一个 tag 参数（?tag=A&tag=B） */
   tag?: string | string[]
+  /** 树形类目：命中「类目路径/」下的所有标签，与 tag 条件取 AND */
+  tag_prefix?: string
   media_type?: string
   rating?: number
   source_chat_id?: number

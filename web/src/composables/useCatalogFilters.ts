@@ -15,10 +15,14 @@ const mediaType = ref('')
 const rating = ref<number | ''>('')
 /** 标签筛选：多选交集（后端 ?tag=A&tag=B 同时命中才返回） */
 const tagFilter = ref<string[]>([])
+/** 树形类目：当前所在的文件夹路径，单选；后端 ?tag_prefix=动漫/ 命中整棵子树 */
+const tagPrefix = ref('')
 const targetFilter = ref<number | ''>('')
 const statusFilter = ref<'active' | 'deleted' | 'all'>('active')
 const stats = ref<Stats | null>(null)
 const tagIndex = ref<TagCount[]>([])
+/** /tags 全量清单：树形类目要用到所有标签，快捷条仍只取热度前 14 */
+const allTags = ref<TagCount[]>([])
 const targets = ref<Target[]>([])
 /** 最近一次 /messages 响应带的分面计数；随筛选实时刷新 */
 const facets = ref<CatalogFacets | null>(null)
@@ -34,12 +38,14 @@ export function useCatalogFilters() {
       const [s, t] = await Promise.all([getStats(), getTags()])
       stats.value = s
       targets.value = s.targets
+      allTags.value = t.items
       tagIndex.value = [...t.items].sort((a, b) => b.count - a.count).slice(0, 14)
     } catch {
       statsLoaded = false
       stats.value = null
       targets.value = []
       tagIndex.value = []
+      allTags.value = []
     }
   }
 
@@ -61,7 +67,7 @@ export function useCatalogFilters() {
     const hit = facets.value?.tags.find((t) => t.name === name)
     if (hit) return hit.count
     if (facets.value) return 0
-    return tagIndex.value.find((t) => t.name === name)?.count ?? 0
+    return allTags.value.find((t) => t.name === name)?.count ?? 0
   }
 
   /** 体例分面计数：''（全部）取分布总和；无分面数据回退 /stats */
@@ -83,6 +89,7 @@ export function useCatalogFilters() {
         mediaType.value ||
         rating.value !== '' ||
         tagFilter.value.length ||
+        tagPrefix.value ||
         targetFilter.value !== '' ||
         statusFilter.value !== 'active'
       ),
@@ -94,7 +101,8 @@ export function useCatalogFilters() {
     rating.value = ''
     targetFilter.value = ''
     statusFilter.value = 'active'
-    tagFilter.value = [] // 触发 URL 同步与重查
+    tagPrefix.value = '' // 触发 URL 同步与重查
+    tagFilter.value = []
   }
 
   /* 各筛选单选可反选（与重构前行为一致） */
@@ -120,16 +128,25 @@ export function useCatalogFilters() {
   function removeTag(name: string) {
     if (tagFilter.value.includes(name)) toggleTag(name)
   }
+  /** 点文件夹：同路径再点一次即退出该文件夹 */
+  function toggleTagPrefix(path: string) {
+    tagPrefix.value = tagPrefix.value === path ? '' : path
+  }
+  function clearTagPrefix() {
+    tagPrefix.value = ''
+  }
 
   return {
     q,
     mediaType,
     rating,
     tagFilter,
+    tagPrefix,
     targetFilter,
     statusFilter,
     stats,
     tagIndex,
+    allTags,
     targets,
     facets,
     isFilterActive,
@@ -145,5 +162,7 @@ export function useCatalogFilters() {
     toggleStatus,
     toggleTag,
     removeTag,
+    toggleTagPrefix,
+    clearTagPrefix,
   }
 }

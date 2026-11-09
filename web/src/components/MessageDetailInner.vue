@@ -439,7 +439,7 @@ async function mutate(
               <input
                 v-model="newTag"
                 type="text"
-                :placeholder="`添加${L.tag}…`"
+                :placeholder="`添加${L.tag}… 用 / 建文件夹，如 动漫/海贼王`"
                 :disabled="busy"
                 class="h-9 min-w-0 flex-1 rounded-sm border border-ink-line bg-ink-surface px-3 text-sm text-steam placeholder:text-steam-dim/60 focus:border-gold focus:outline-none disabled:opacity-50"
                 @keyup.enter="addTag"

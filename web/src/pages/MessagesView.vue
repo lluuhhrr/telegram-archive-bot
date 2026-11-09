@@ -11,6 +11,7 @@ import {
 import { useRoute, useRouter } from 'vue-router'
 import {
   AlertTriangle,
+  Folder,
   LayoutGrid,
   Loader2,
   RotateCcw,
@@ -45,6 +46,7 @@ const {
   mediaType,
   rating,
   tagFilter,
+  tagPrefix,
   targetFilter,
   statusFilter,
   tagIndex,
@@ -61,6 +63,7 @@ const {
   toggleStatus,
   toggleTag,
   removeTag,
+  clearTagPrefix,
 } = useCatalogFilters()
 
 const data = ref<MessagesResponse | null>(null)
@@ -180,7 +183,7 @@ const catalogTags = computed(() =>
   tagIndex.value.filter((t) => tagCount(t.name) > 0 || tagFilter.value.includes(t.name)),
 )
 
-// URL ?tag=（从标签页点来，可多值）作为标签筛选的初始值
+// URL ?tag=（可多值）与 ?tag_prefix=（所在文件夹）作为筛选初始值
 function tagsFromQuery(value: unknown): string[] {
   if (typeof value === 'string') return value ? [value] : []
   if (Array.isArray(value)) return value.filter((v): v is string => typeof v === 'string' && !!v)
@@ -191,24 +194,25 @@ function syncFromQuery() {
   const next = tagsFromQuery(route.query.tag)
   const cur = tagFilter.value
   if (next.length !== cur.length || next.some((t, i) => t !== cur[i])) tagFilter.value = next
+  const prefix = typeof route.query.tag_prefix === 'string' ? route.query.tag_prefix : ''
+  if (prefix !== tagPrefix.value) tagPrefix.value = prefix
 }
 
-// 标签筛选变更时同步回 URL，可分享/前进后退（多值 ?tag=A&tag=B）
+// 筛选变更时同步回 URL，可分享/前进后退（?tag=A&tag=B&tag_prefix=动漫）
 function syncToQuery() {
   router.replace({
-    query: tagFilter.value.length ? { tag: tagFilter.value } : {},
+    query: {
+      ...(tagPrefix.value ? { tag_prefix: tagPrefix.value } : {}),
+      ...(tagFilter.value.length ? { tag: tagFilter.value } : {}),
+    },
   })
 }
 
-// 详情面板点标签等场景在同一页改 query：路由变化要反映到筛选。
-// 仅在与当前值不同才回写，避免和 syncToQuery 打环。
+// 详情面板点标签、类目树点文件夹等场景在同一页改 query：路由变化要反映到筛选。
+// syncFromQuery 内部逐项比较，避免和 syncToQuery 打环。
 watch(
-  () => route.query.tag,
-  (t) => {
-    const next = tagsFromQuery(t)
-    const cur = tagFilter.value
-    if (next.length !== cur.length || next.some((name, i) => name !== cur[i])) tagFilter.value = next
-  },
+  () => [route.query.tag, route.query.tag_prefix],
+  () => syncFromQuery(),
 )
 
 // 窄屏判定：详情栏在 <1280 转覆盖层，需要给遮罩做条件渲染
@@ -319,7 +323,7 @@ watch([q, mediaType, rating, targetFilter, statusFilter], () => {
   clearTimeout(timer)
   timer = setTimeout(load, 300)
 })
-watch(tagFilter, () => {
+watch([tagFilter, tagPrefix], () => {
   syncToQuery()
   clearTimeout(timer)
   timer = setTimeout(load, 300)
@@ -335,6 +339,7 @@ async function load() {
       media_type: mediaType.value || undefined,
       rating: rating.value === '' ? undefined : Number(rating.value),
       tag: tagFilter.value.length ? tagFilter.value : undefined,
+      tag_prefix: tagPrefix.value || undefined,
       target_chat_id: targetFilter.value === '' ? undefined : Number(targetFilter.value),
       status: statusFilter.value,
       limit: PAGE,
@@ -366,6 +371,7 @@ async function loadMore() {
       media_type: mediaType.value || undefined,
       rating: rating.value === '' ? undefined : Number(rating.value),
       tag: tagFilter.value.length ? tagFilter.value : undefined,
+      tag_prefix: tagPrefix.value || undefined,
       target_chat_id: targetFilter.value === '' ? undefined : Number(targetFilter.value),
       status: statusFilter.value,
       limit: PAGE,
@@ -563,6 +569,20 @@ onBeforeUnmount(() => {
             >
               {{ op.label }}
             </button>
+            <template v-if="tagPrefix">
+              <span class="mx-1 hidden h-4 w-px bg-ink-line min-[480px]:block" aria-hidden="true"></span>
+              <span class="inline-flex h-7 items-center gap-1.5 rounded-full border border-gold bg-gold/10 px-2.5 text-xs text-gold">
+                <Folder class="h-3 w-3" /> {{ tagPrefix }}/
+                <button
+                  type="button"
+                  class="cursor-pointer transition-opacity hover:opacity-60"
+                  :aria-label="`退出文件夹 ${tagPrefix}`"
+                  @click="clearTagPrefix()"
+                >
+                  <X class="h-3 w-3" />
+                </button>
+              </span>
+            </template>
             <template v-if="tagFilter.length">
               <span class="mx-1 hidden h-4 w-px bg-ink-line min-[480px]:block" aria-hidden="true"></span>
               <TransitionGroup name="v-list">

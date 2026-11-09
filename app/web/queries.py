@@ -101,9 +101,13 @@ def _material_filters(
     见 _search_condition），FTS 不可用时回退正文+渲染文本的大小写不敏感
     子串匹配、
     tag 可多值（?tag=A&tag=B）AND 交集——副本素材看副本标签，父表素材看父表标签。
+    tag_prefix=<类目路径> 命中以「路径/」开头的任一标签，用于树形类目里点开
+    文件夹时展示整棵子树；与 tag 多值条件共存时取 AND。前缀里的 LIKE 通配符
+    会被转义，避免 % / _ 变成模式匹配。
 
     exclude 指定要剔除的维度（media_type/rating/target/tag），供分面计数复用
-    同一筛选条件但不对本维度设约束（标准分面搜索语义）。
+    同一筛选条件但不对本维度设约束（标准分面搜索语义）。tag 维度同时剔除
+    tag 与 tag_prefix 两个条件。
     """
     conds: list[str] = []
     params: list[object] = []
@@ -172,6 +176,29 @@ def _material_filters(
                 "WHERE mt2.message_id = m.id AND t.name = ?)"
             )
             params.append(tag)
+    # 树形类目：点开文件夹要看到其下所有层级的资源。前缀统一补 '/'，
+    # 避免 ?tag_prefix=动漫 误命中「动漫剧场版」这类同级标签。
+    tag_prefix = "" if exclude == "tag" else (query.get("tag_prefix") or "").strip("/")
+    if tag_prefix:
+        escaped = (
+            tag_prefix.replace("\\", "\\\\").replace("%", r"\%").replace("_", r"\_")
+        )
+        pattern = f"{escaped}/%"
+        if joined:
+            conds.append(
+                "(EXISTS (SELECT 1 FROM target_tags tt JOIN tags t ON t.id = tt.tag_id "
+                "WHERE tt.target_id = mt.id AND t.name LIKE ? ESCAPE '\\') "
+                "OR (mt.id IS NULL AND EXISTS (SELECT 1 FROM message_tags mt2 "
+                "JOIN tags t2 ON t2.id = mt2.tag_id "
+                "WHERE mt2.message_id = m.id AND t2.name LIKE ? ESCAPE '\\')))"
+            )
+            params.extend([pattern, pattern])
+        else:
+            conds.append(
+                "EXISTS (SELECT 1 FROM message_tags mt2 JOIN tags t ON t.id = mt2.tag_id "
+                "WHERE mt2.message_id = m.id AND t.name LIKE ? ESCAPE '\\')"
+            )
+            params.append(pattern)
     where = f"WHERE {' AND '.join(conds)}" if conds else ""
     return where, params
 

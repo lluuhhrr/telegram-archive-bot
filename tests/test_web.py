@@ -503,6 +503,77 @@ def test_messages_list_multi_tag_is_intersection(tmp_path):
         assert missing["total"] == 0
 
 
+def _hierarchy_db(tmp_path):
+    """树形类目样本：两条在「动漫/」下、一条在「电影/」下，
+    另有根级同名标签「动漫」与同级干扰项「动漫剧场版/特别篇」。"""
+    import sqlite3
+
+    db = _make_schema_db(tmp_path, name="hierarchy.sqlite")
+    conn = sqlite3.connect(db)
+    names = [
+        "动漫/海贼王", "动漫/火影忍者", "电影/星际穿越",
+        "动漫", "动漫剧场版/特别篇", "精选",
+    ]
+    conn.executemany(
+        "INSERT INTO tags (name, normalized_name) VALUES (?, ?)",
+        [(name, name.lower()) for name in names],
+    )
+    conn.executemany(
+        "INSERT INTO messages (id, source_chat_id, source_message_id, media_type, "
+        "original_text, status) VALUES (?, ?, ?, 'photo', ?, 'archived')",
+        [(i, -1000 - i, i, f"素材 {i}") for i in range(1, 7)],
+    )
+    conn.executescript(
+        """
+        INSERT INTO message_tags (message_id, tag_id, type) VALUES
+            (1, 1, 'source'), (1, 6, 'manual'),
+            (2, 2, 'source'),
+            (3, 3, 'source'),
+            (4, 4, 'source'),
+            (5, 5, 'source'),
+            (6, 6, 'manual');
+        """
+    )
+    conn.commit()
+    conn.close()
+    return db
+
+
+def test_messages_tag_prefix_matches_whole_subtree(tmp_path):
+    """?tag_prefix=动漫 命中整棵子树，不吞掉根级同名标签或同级前缀标签。"""
+    db = _hierarchy_db(tmp_path)
+    with _logged_client(db) as client:
+        subtree = client.get("/api/v1/messages?tag_prefix=动漫").json()
+        assert subtree["total"] == 2
+        assert {item["id"] for item in subtree["items"]} == {1, 2}
+
+        root_exact = client.get("/api/v1/messages?tag=动漫").json()
+        assert root_exact["total"] == 1
+        assert root_exact["items"][0]["id"] == 4
+
+        leaf = client.get("/api/v1/messages?tag=动漫/海贼王").json()
+        assert leaf["total"] == 1
+        assert leaf["items"][0]["id"] == 1
+
+
+def test_messages_tag_prefix_combines_and_escapes(tmp_path):
+    """前缀与 tag 多值取 AND；LIKE 通配符按字面量处理；空前缀不筛选。"""
+    db = _hierarchy_db(tmp_path)
+    with _logged_client(db) as client:
+        combined = client.get("/api/v1/messages?tag_prefix=动漫&tag=精选").json()
+        assert combined["total"] == 1
+        assert combined["items"][0]["id"] == 1
+
+        assert client.get("/api/v1/messages", params={"tag_prefix": "动漫%"}).json()["total"] == 0
+        assert client.get("/api/v1/messages", params={"tag_prefix": "动漫_"}).json()["total"] == 0
+        assert client.get("/api/v1/messages?tag_prefix=").json()["total"] == 6
+
+        facets = client.get("/api/v1/messages?tag_prefix=动漫").json()["facets"]
+        assert {t["name"]: t["count"] for t in facets["tags"]} == {
+            "动漫/海贼王": 1,
+            "动漫/火影忍者": 1,
+            "精选": 1,
+        }
 
 
 def test_reset_database_uses_request_owned_connection(tmp_path):

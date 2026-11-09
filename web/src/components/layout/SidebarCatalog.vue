@@ -1,8 +1,19 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { CircleDot, ListFilter, Send, Star, Tags as TagsIcon } from 'lucide-vue-next'
+import {
+  ChevronDown,
+  ChevronRight,
+  CircleDot,
+  Folder,
+  Hash,
+  ListFilter,
+  Send,
+  Star,
+  Tags as TagsIcon,
+} from 'lucide-vue-next'
 import { useCatalogFilters } from '@/composables/useCatalogFilters'
+import { buildTagTree, defaultExpanded, flattenTagTree } from '@/lib/tagTree'
 import { useVocab, typeLabel as vocabTypeLabel } from '@/lib/vocab'
 
 /*
@@ -18,8 +29,9 @@ const {
   rating,
   statusFilter,
   tagFilter,
+  tagPrefix,
   targetFilter,
-  tagIndex,
+  allTags,
   targets,
   isFilterActive,
   loadStats,
@@ -32,16 +44,41 @@ const {
   toggleTarget,
   toggleTag,
   removeTag,
+  toggleTagPrefix,
+  clearTagPrefix,
 } = useCatalogFilters()
 const L = useVocab()
 const route = useRoute()
 const router = useRouter()
 
-/* 标签共现计数为 0 的直接隐藏（已选中的保留，否则无法取消）；
- * 没有分面数据时 tagCount 走全局回退，列表原样展示 */
-const visibleTags = computed(() =>
-  tagIndex.value.filter((t) => tagCount(t.name) > 0 || tagFilter.value.includes(t.name)),
+/* 标签区改成文件夹树：树用 /tags 全量清单，行上的数字仍走分面计数。
+   树天然可折叠，不需要再按共现计数裁掉 0 项（否则切换文件夹时树会塌掉）。 */
+const expandedFolders = ref<Set<string>>(new Set())
+const tagTree = computed(() => buildTagTree(allTags.value))
+const tagRows = computed(() => flattenTagTree(tagTree.value, expandedFolders.value))
+watch(
+  tagTree,
+  (nodes) => {
+    if (nodes.length && !expandedFolders.value.size) {
+      expandedFolders.value = new Set(defaultExpanded(nodes))
+    }
+  },
+  { immediate: true },
 )
+
+function toggleFolder(path: string) {
+  const next = new Set(expandedFolders.value)
+  if (next.has(path)) next.delete(path)
+  else next.add(path)
+  expandedFolders.value = next
+}
+
+function filterQuery(): Record<string, string | string[]> {
+  const query: Record<string, string | string[]> = {}
+  if (tagPrefix.value) query.tag_prefix = tagPrefix.value
+  if (tagFilter.value.length) query.tag = tagFilter.value
+  return query
+}
 
 function goMessages(query: Record<string, string | string[]> = {}) {
   if (route.name !== 'messages') {
@@ -64,7 +101,11 @@ function clearTarget() {
 }
 function pickTag(name: string) {
   toggleTag(name)
-  goMessages(tagFilter.value.length ? { tag: tagFilter.value } : {})
+  goMessages(filterQuery())
+}
+function pickFolder(path: string) {
+  toggleTagPrefix(path)
+  goMessages(filterQuery())
 }
 function pickRating(value: number) {
   toggleRating(value)
@@ -108,6 +149,10 @@ const activeFilters = computed(() => {
       label: r === 0 ? L.value.unrated : L.value.ratingHint[r - 1],
       clear: () => toggleRating(r),
     })
+  }
+  if (tagPrefix.value) {
+    const folder = tagPrefix.value
+    items.push({ label: `文件夹 ${folder}/`, clear: () => clearTagPrefix() })
   }
   for (const t of tagFilter.value) items.push({ label: `#${t}`, clear: () => removeTag(t) })
   if (targetFilter.value !== '') {
@@ -202,8 +247,8 @@ onMounted(loadStats)
       </div>
     </section>
 
-    <!-- 标签（多选交集） -->
-    <section v-if="tagIndex.length">
+    <!-- 标签：文件夹树（点文件夹进入整棵子树，点叶子做精确标签筛选） -->
+    <section v-if="tagTree.length">
       <h3 class="flex items-center gap-2 px-2 pb-1.5 pt-4 text-[11px] font-medium text-steam-dim">
         <span class="grid size-5 shrink-0 place-items-center rounded-md bg-gold/10 text-gold">
           <TagsIcon class="size-3" />
@@ -211,23 +256,50 @@ onMounted(loadStats)
         {{ L.tag }}
       </h3>
       <div class="ml-4 border-l border-ink-line pl-3">
-        <button
-          v-for="tag in visibleTags"
-          :key="tag.name"
-          type="button"
-          class="flex h-8 w-full cursor-pointer items-center gap-1.5 rounded-md px-2 text-left text-[13px] transition-colors"
-          :class="tagFilter.includes(tag.name) ? 'bg-gold/10 font-medium text-gold' : 'text-steam-dim hover:bg-ink-raised hover:text-steam'"
-          :aria-pressed="tagFilter.includes(tag.name)"
-          @click="pickTag(tag.name)"
+        <div
+          v-for="row in tagRows"
+          :key="row.node.path"
+          class="flex h-8 w-full items-center gap-1"
+          :style="{ paddingLeft: `${row.depth * 12}px` }"
         >
-          <span class="min-w-0 truncate">#{{ tag.name }}</span>
-          <span
-            class="ml-auto shrink-0 rounded-full px-1.5 font-mono text-[10px] tabular-nums"
-            :class="tagFilter.includes(tag.name) ? 'bg-gold/20 text-gold' : 'bg-ink-raised text-steam-dim/80'"
+          <button
+            v-if="row.node.children.length"
+            type="button"
+            class="grid size-5 shrink-0 cursor-pointer place-items-center rounded text-steam-dim transition-colors hover:text-gold"
+            :aria-label="`${row.expanded ? '折叠' : '展开'} ${row.node.path}`"
+            :aria-expanded="row.expanded"
+            @click="toggleFolder(row.node.path)"
           >
-            {{ tagCount(tag.name) }}
-          </span>
-        </button>
+            <ChevronDown v-if="row.expanded" class="size-3" />
+            <ChevronRight v-else class="size-3" />
+          </button>
+          <span v-else class="size-5 shrink-0" />
+          <button
+            type="button"
+            class="flex h-8 min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-md px-2 text-left text-[13px] transition-colors"
+            :class="
+              (row.node.children.length ? tagPrefix === row.node.path : tagFilter.includes(row.node.path))
+                ? 'bg-gold/10 font-medium text-gold'
+                : 'text-steam-dim hover:bg-ink-raised hover:text-steam'
+            "
+            :aria-pressed="row.node.children.length ? tagPrefix === row.node.path : tagFilter.includes(row.node.path)"
+            :title="row.node.path"
+            @click="row.node.children.length ? pickFolder(row.node.path) : pickTag(row.node.path)"
+          >
+            <component :is="row.node.children.length ? Folder : Hash" class="size-3 shrink-0" />
+            <span class="min-w-0 truncate">{{ row.node.name }}</span>
+            <span
+              class="ml-auto shrink-0 rounded-full px-1.5 font-mono text-[10px] tabular-nums"
+              :class="
+                (row.node.children.length ? tagPrefix === row.node.path : tagFilter.includes(row.node.path))
+                  ? 'bg-gold/20 text-gold'
+                  : 'bg-ink-raised text-steam-dim/80'
+              "
+            >
+              {{ row.node.children.length ? row.node.subtreeCount : tagCount(row.node.path) }}
+            </span>
+          </button>
+        </div>
       </div>
     </section>
 
